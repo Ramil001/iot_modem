@@ -2,6 +2,20 @@
 #include <BLEUtils.h>
 #include <BLEScan.h>
 #include <BLEAdvertisedDevice.h>
+#include "esp_task_wdt.h"
+
+
+// Define the WDT timeout in milliseconds (3 seconds = 3000 ms)
+#define WDT_TIMEOUT 30000  // Adjust this as needed
+
+// Configuration for using WDT on a specific number of cores (usually 1 or 2)
+#define CONFIG_FREERTOS_NUMBER_OF_CORES 1 
+// Create a config structure for the WDT
+esp_task_wdt_config_t twdt_config = {
+    .timeout_ms = WDT_TIMEOUT,  // WDT timeout period
+    .idle_core_mask = (1 << CONFIG_FREERTOS_NUMBER_OF_CORES) - 1,  // Bitmask of cores to monitor
+    .trigger_panic = true,  // Trigger a panic and restart if WDT is not reset in time
+};
 
 #define SIM800L_IP5306_VERSION_20200811
 #define DUMP_AT_COMMANDS
@@ -160,6 +174,14 @@ void setup() {
     SerialMon.begin(115200);
     SerialAT.begin(115200);
 
+    // Deinitialize the WDT if it was already enabled by default
+    esp_task_wdt_deinit(); 
+
+    // Initialize the WDT with the new configuration
+    esp_task_wdt_init(&twdt_config); 
+
+    // Add the current task (main loop task) to the WDT's monitoring
+    esp_task_wdt_add(NULL); 
     BLEDevice::init("BLE Scanner");
     pBLEScan = BLEDevice::getScan(); // Create BLE scan object
     pBLEScan->setActiveScan(true); // Enable active scan
@@ -170,8 +192,25 @@ void setup() {
     setupModem();
     connectToGPRS();
 }
-
+// Global variables to keep track of time and iterations
+int i = 0;
+int last = millis();
 void loop() {
+ // Simulate periodic task that resets the WDT every 2 seconds
+  if (millis() - last >= 2000 && i < 5) {
+    Serial.println("Resetting WDT...");
+    
+    // Reset (feed) the watchdog to prevent it from timing out
+    esp_task_wdt_reset(); 
+    
+    last = millis();  // Update the last reset time
+    i++;  // Increment the counter
+    
+    // After 5 resets, stop feeding the WDT
+    if (i == 5) {
+      Serial.println("Stopping WDT reset. CPU should reboot in 3 seconds.");
+    }
+  }
     // Start BLE scanning
     BLEScanResults scanResults = *pBLEScan->start(scanTime, false);
     SerialMon.println("Scan complete.");
