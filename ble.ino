@@ -119,34 +119,74 @@ void processManufacturerData(uint8_t* data, size_t length, const String& deviceN
     sendDataToServer(deviceName, temperature, pressure, battery, macAddress);
 }
 
+// Define the structure to store device data
+struct DeviceData {
+    String deviceName;
+    String macAddress;
+    float temperature;
+    float pressure;
+    uint8_t battery;
+};
+
+DeviceData devices[10];  // Массив для хранения данных о 10 устройствах
+int deviceCount = 0;     // Счётчик найденных устройств
+
+
 class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
     void onResult(BLEAdvertisedDevice advertisedDevice) override {
         String macAddress = advertisedDevice.getAddress().toString().c_str();
         SerialMon.println("Device detected!");
 
         String deviceName = advertisedDevice.haveName() ? advertisedDevice.getName().c_str() : "Unknown Device";
+        
         if (deviceName.startsWith("LTPT07")) {
-        SerialMon.print("Device Name: ");
-        SerialMon.println(deviceName);
+            SerialMon.print("Device Name: ");
+            SerialMon.println(deviceName);
 
-        SerialMon.print("Device MAC Address: ");
-        SerialMon.println(macAddress);
+            SerialMon.print("Device MAC Address: ");
+            SerialMon.println(macAddress);
 
-        String manufacturerData = advertisedDevice.getManufacturerData();
-        if (manufacturerData.length() > 0) {
-            SerialMon.println("Manufacturer data received:");
-            for (size_t i = 0; i < manufacturerData.length(); ++i) {
-                SerialMon.print("0x");
-                SerialMon.print((int)manufacturerData[i], HEX);
-                SerialMon.print(" ");
+            String manufacturerData = advertisedDevice.getManufacturerData();
+            if (manufacturerData.length() > 0) {
+                SerialMon.println("Manufacturer data received:");
+                for (size_t i = 0; i < manufacturerData.length(); ++i) {
+                    SerialMon.print("0x");
+                    SerialMon.print((int)manufacturerData[i], HEX);
+                    SerialMon.print(" ");
+                }
+                SerialMon.println();
+
+                // Обработка данных и сохранение в массив
+                float pressure;
+                memcpy(&pressure, &manufacturerData[2], sizeof(float));
+
+                float temperature = (manufacturerData[7] + (manufacturerData[8] << 8)) / 100.0;
+                uint8_t battery = manufacturerData[10];
+
+                // Сохранение данных в массив
+                devices[deviceCount].deviceName = deviceName;
+                devices[deviceCount].macAddress = macAddress;
+                devices[deviceCount].temperature = temperature;
+                devices[deviceCount].pressure = pressure;
+                devices[deviceCount].battery = battery;
+                deviceCount++;
+
+                // Проверка на переполнение массива
+                if (deviceCount >= 10) {
+                    SerialMon.println("Device array is full!");
+                    return;
+                }
             }
-            SerialMon.println();
-
-            processManufacturerData((uint8_t*)manufacturerData.c_str(), manufacturerData.length(), deviceName, macAddress);
         }
-      }
     }
 };
+
+void sendDevicesDataToServer() {
+    for (int i = 0; i < deviceCount; i++) {
+        sendDataToServer(devices[i].deviceName, devices[i].temperature, devices[i].pressure, devices[i].battery, devices[i].macAddress);
+    }
+}
+
 
 
 void setup() {
@@ -154,20 +194,32 @@ void setup() {
     SerialAT.begin(115200);
     setupModem();
     connectToGPRS();
-    BLEDevice::init("BLE Scanner");
-    pBLEScan = BLEDevice::getScan(); 
-    pBLEScan->setActiveScan(true);
-    pBLEScan->setInterval(200);
-    pBLEScan->setWindow(180);
+    Serial.println("Starting BLE scan...");
+
+    // BLE initialization
+    BLEDevice::init("");
+
+    // BLE scan setup
+    pBLEScan = BLEDevice::getScan();
     pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
+    pBLEScan->setInterval(100);
+    pBLEScan->setWindow(99);
+
+    // Start BLE scan
+    Serial.println("Scanning...");
+    pBLEScan->start(scanTime, false);
+
+    // Отправка собранных данных на сервер
+    if (deviceCount > 0) {
+        sendDevicesDataToServer();
+    }
+    Serial.println("Scan finished without finding all devices.");
+    pBLEScan->clearResults();
+    Serial.println("Entering deep sleep...");
+    esp_deep_sleep(TIME_TO_SLEEP * uS_TO_S_FACTOR);
 }
 
-void loop() {
-    SerialMon.println("Starting BLE scan...");
-    BLEScanResults scanResults = *pBLEScan->start(scanTime, false);
-    SerialMon.println("Scan complete.");
-    pBLEScan->clearResults();
 
-    SerialMon.println("Entering deep sleep...");
-    esp_deep_sleep(TIME_TO_SLEEP * uS_TO_S_FACTOR);
+
+void loop() {
 }
