@@ -2,21 +2,8 @@
 #include <BLEUtils.h>
 #include <BLEScan.h>
 #include <BLEAdvertisedDevice.h>
-#include "esp_task_wdt.h"
 
-
-// Define the WDT timeout in milliseconds (3 seconds = 3000 ms)
-#define WDT_TIMEOUT 30000  // Adjust this as needed
-
-// Configuration for using WDT on a specific number of cores (usually 1 or 2)
-#define CONFIG_FREERTOS_NUMBER_OF_CORES 1 
-// Create a config structure for the WDT
-esp_task_wdt_config_t twdt_config = {
-    .timeout_ms = WDT_TIMEOUT,  // WDT timeout period
-    .idle_core_mask = (1 << CONFIG_FREERTOS_NUMBER_OF_CORES) - 1,  // Bitmask of cores to monitor
-    .trigger_panic = true,  // Trigger a panic and restart if WDT is not reset in time
-};
-
+// Удаляем конфигурацию и использование WDT
 #define SIM800L_IP5306_VERSION_20200811
 #define DUMP_AT_COMMANDS
 #define TINY_GSM_DEBUG SerialMon
@@ -116,20 +103,13 @@ void sendDataToServer(String deviceName, float temperature, float pressure, uint
 
 void processManufacturerData(uint8_t* data, size_t length)
 {
-    // Read pressure as float (Little Endian)
     float pressure;
     memcpy(&pressure, &data[2], sizeof(float));
 
-    // Read temperature (16-bit value, Little Endian)
     float temperature = (data[7] + (data[8] << 8)) / 100.0;
-
-    // Read battery percentage
     uint8_t battery = data[10];
+    String macAddress = "00:14:22:01:23:45"; 
 
-    // Read MAC address (assuming it is part of the manufacturer data)
-    String macAddress = "00:14:22:01:23:45"; // Use actual MAC address from the advertised device data
-
-    // Send data to server
     sendDataToServer("LTP_00027", temperature, pressure, battery, macAddress);
 }
 
@@ -137,7 +117,6 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
     void onResult(BLEAdvertisedDevice advertisedDevice) {
         String macAddress = advertisedDevice.getAddress().toString().c_str();
 
-        // Проверяем, совпадает ли MAC-адрес с нужным
         if (macAddress == "5c:02:72:97:f2:4d") {
             SerialMon.println("Device found!");
 
@@ -149,7 +128,6 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
             SerialMon.print("Device MAC Address: ");
             SerialMon.println(macAddress);
 
-            // Обработка Manufacturer Data
             String manufacturerData = advertisedDevice.getManufacturerData();
             if (manufacturerData.length() > 0) {
                 SerialMon.println("Manufacturer data received:");
@@ -163,7 +141,6 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
                 processManufacturerData((uint8_t*)manufacturerData.c_str(), manufacturerData.length());
             }
         } else {
-            // Если MAC-адрес не совпадает, игнорируем устройство
             SerialMon.println("Device MAC address does not match, ignoring...");
         }
     }
@@ -174,47 +151,23 @@ void setup() {
     SerialMon.begin(115200);
     SerialAT.begin(115200);
 
-    // Deinitialize the WDT if it was already enabled by default
-    esp_task_wdt_deinit(); 
-
-    // Initialize the WDT with the new configuration
-    esp_task_wdt_init(&twdt_config); 
-
-    // Add the current task (main loop task) to the WDT's monitoring
-    esp_task_wdt_add(NULL); 
     BLEDevice::init("BLE Scanner");
-    pBLEScan = BLEDevice::getScan(); // Create BLE scan object
-    pBLEScan->setActiveScan(true); // Enable active scan
-    pBLEScan->setInterval(200); // Scan interval
-    pBLEScan->setWindow(180); // Scan window
+    pBLEScan = BLEDevice::getScan(); 
+    pBLEScan->setActiveScan(true);
+    pBLEScan->setInterval(200);
+    pBLEScan->setWindow(180);
     pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
 
     setupModem();
     connectToGPRS();
 }
-// Global variables to keep track of time and iterations
-int i = 0;
-int last = millis();
+
 void loop() {
- // Simulate periodic task that resets the WDT every 2 seconds
-  if (millis() - last >= 2000 && i < 5) {
-    Serial.println("Resetting WDT...");
-    
-    // Reset (feed) the watchdog to prevent it from timing out
-    esp_task_wdt_reset(); 
-    
-    last = millis();  // Update the last reset time
-    i++;  // Increment the counter
-    
-    // After 5 resets, stop feeding the WDT
-    if (i == 5) {
-      Serial.println("Stopping WDT reset. CPU should reboot in 3 seconds.");
-    }
-  }
-    // Start BLE scanning
+    SerialMon.println("Starting BLE scan...");
     BLEScanResults scanResults = *pBLEScan->start(scanTime, false);
     SerialMon.println("Scan complete.");
-    pBLEScan->clearResults(); // Clear scan results
+    pBLEScan->clearResults();
 
-    delay(2000); // Delay before next scan
+    SerialMon.println("Entering deep sleep...");
+    esp_deep_sleep(TIME_TO_SLEEP * uS_TO_S_FACTOR);
 }
