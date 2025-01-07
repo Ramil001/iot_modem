@@ -26,7 +26,7 @@ TinyGsm modem(SerialAT);
 
 // Server details
 const char server[] = "iot.mit.kh.ua";
-const char resource[] = "/devices"; // Endpoint to send data
+const char resource[] = "/api/v1/metrics/add"; // Endpoint to send data
 const int port = 80;
 
 // Your GPRS credentials (leave empty, if missing)
@@ -61,28 +61,31 @@ void connectToGPRS()
     SerialMon.println("Connected to GPRS");
 }
 
-void sendDataToServer(String deviceName, float temperature, float pressure, uint8_t battery, String macAddress)
-{
+void sendDataToServer(String device, float temp, float press, uint8_t battery, String mac) {
+    // Формирование JSON-данных
     String jsonData = "{";
-    jsonData += "\"deviceName\":\"" + deviceName + "\",";
-    jsonData += "\"comment\":\"На высоком давлении\",";
-    jsonData += "\"lat\":49.9935,";
-    jsonData += "\"lng\":36.2304,";
-    jsonData += "\"temp\":" + String(temperature) + ",";
-    jsonData += "\"pressure\":" + String(pressure) + ",";
-    jsonData += "\"macAddress\":\"" + macAddress + "\"";
+    jsonData += "\"device\":\"" + device + "\",";
+    jsonData += "\"mac\":\"" + mac + "\",";
+    jsonData += "\"temp\":" + String(temp) + ",";
+    jsonData += "\"press\":" + String(press) + ",";
+    jsonData += "\"battery\":" + String(battery);
     jsonData += "}";
 
     SerialMon.println("Sending data to server...");
+    
+    // Подключение к серверу
     if (client.connect(server, port)) {
+        SerialMon.println("Connected to server!");
+
+        // Формирование HTTP-запроса
         client.println("POST " + String(resource) + " HTTP/1.1");
         client.println("Host: " + String(server));
         client.println("Content-Type: application/json");
         client.println("Content-Length: " + String(jsonData.length()));
-        client.println();
-        client.print(jsonData);
+        client.println(); // Пустая строка для завершения заголовков
+        client.print(jsonData); // Отправка тела запроса
 
-        // Wait for response
+        // Ожидание ответа
         unsigned long timeout = millis();
         while (client.available() == 0) {
             if (millis() - timeout > 5000) {
@@ -92,57 +95,56 @@ void sendDataToServer(String deviceName, float temperature, float pressure, uint
             }
         }
 
-        // Read response from the server
+        // Чтение ответа от сервера
         while (client.available()) {
             String line = client.readStringUntil('\r');
             SerialMon.println(line);
         }
+    } else {
+        SerialMon.println("Failed to connect to server!");
     }
+
+    // Закрытие соединения
     client.stop();
 }
 
-void processManufacturerData(uint8_t* data, size_t length)
-{
+
+void processManufacturerData(uint8_t* data, size_t length, const String& deviceName, const String& macAddress) {
     float pressure;
     memcpy(&pressure, &data[2], sizeof(float));
 
     float temperature = (data[7] + (data[8] << 8)) / 100.0;
     uint8_t battery = data[10];
-    String macAddress = "00:14:22:01:23:45"; 
 
-    sendDataToServer("LTP_00027", temperature, pressure, battery, macAddress);
+    sendDataToServer(deviceName, temperature, pressure, battery, macAddress);
 }
 
-class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
-    void onResult(BLEAdvertisedDevice advertisedDevice) {
+class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
+    void onResult(BLEAdvertisedDevice advertisedDevice) override {
         String macAddress = advertisedDevice.getAddress().toString().c_str();
+        SerialMon.println("Device detected!");
 
-        if (macAddress == "5c:02:72:97:f2:4d") {
-            SerialMon.println("Device found!");
+        String deviceName = advertisedDevice.haveName() ? advertisedDevice.getName().c_str() : "Unknown Device";
+        if (deviceName.startsWith("LTPT07")) {
+        SerialMon.print("Device Name: ");
+        SerialMon.println(deviceName);
 
-            if (advertisedDevice.haveName()) {
-                SerialMon.print("Device Name: ");
-                SerialMon.println(advertisedDevice.getName().c_str());
+        SerialMon.print("Device MAC Address: ");
+        SerialMon.println(macAddress);
+
+        String manufacturerData = advertisedDevice.getManufacturerData();
+        if (manufacturerData.length() > 0) {
+            SerialMon.println("Manufacturer data received:");
+            for (size_t i = 0; i < manufacturerData.length(); ++i) {
+                SerialMon.print("0x");
+                SerialMon.print((int)manufacturerData[i], HEX);
+                SerialMon.print(" ");
             }
+            SerialMon.println();
 
-            SerialMon.print("Device MAC Address: ");
-            SerialMon.println(macAddress);
-
-            String manufacturerData = advertisedDevice.getManufacturerData();
-            if (manufacturerData.length() > 0) {
-                SerialMon.println("Manufacturer data received:");
-                for (size_t i = 0; i < manufacturerData.length(); ++i) {
-                    SerialMon.print("0x");
-                    SerialMon.print((int)manufacturerData[i], HEX);
-                    SerialMon.print(" ");
-                }
-                SerialMon.println();
-
-                processManufacturerData((uint8_t*)manufacturerData.c_str(), manufacturerData.length());
-            }
-        } else {
-            SerialMon.println("Device MAC address does not match, ignoring...");
+            processManufacturerData((uint8_t*)manufacturerData.c_str(), manufacturerData.length(), deviceName, macAddress);
         }
+      }
     }
 };
 
@@ -150,16 +152,14 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
 void setup() {
     SerialMon.begin(115200);
     SerialAT.begin(115200);
-
+    setupModem();
+    connectToGPRS();
     BLEDevice::init("BLE Scanner");
     pBLEScan = BLEDevice::getScan(); 
     pBLEScan->setActiveScan(true);
     pBLEScan->setInterval(200);
     pBLEScan->setWindow(180);
     pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
-
-    setupModem();
-    connectToGPRS();
 }
 
 void loop() {
