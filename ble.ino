@@ -1,5 +1,4 @@
 #include <BLEDevice.h>
-#include <BLEUtils.h>
 #include <BLEScan.h>
 #include <BLEAdvertisedDevice.h>
 
@@ -22,7 +21,7 @@ TinyGsm modem(SerialAT);
 #endif
 
 #define uS_TO_S_FACTOR 1000000ULL  /* Conversion factor for micro seconds to seconds */
-#define TIME_TO_SLEEP  60        /* Time ESP32 will go to sleep (in seconds) */
+#define TIME_TO_SLEEP  1800        /* Time ESP32 will go to sleep (in seconds) */
 
 // Server details
 const char server[] = "iot.mit.kh.ua";
@@ -38,7 +37,7 @@ const char simPIN[]   = ""; // SIM card PIN code, if any
 TinyGsmClient client(modem);
 
 BLEScan* pBLEScan;
-int scanTime = 5; // Scan time in seconds
+int scanTime = 3; // Scan time in seconds
 
 void setupModem()
 {
@@ -216,7 +215,10 @@ void setup() {
     Serial.println("Scan finished without finding all devices.");
     pBLEScan->clearResults();
     Serial.println("Entering deep sleep...");
-    esp_deep_sleep(TIME_TO_SLEEP * uS_TO_S_FACTOR);
+    esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
+    Serial.flush();
+    // Переход в глубокий сон
+    esp_deep_sleep_start();
 }
 
 
